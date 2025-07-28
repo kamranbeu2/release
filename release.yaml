@@ -1,14 +1,15 @@
 .release_template:
   stage: release
   image: registry.gitlab.com/gitlab-org/release-cli:latest
+  resource_group: release-${CI_COMMIT_BRANCH}
   before_script:
     - apk update && apk add --no-cache git bash jq
     - git --version
     - bash --version
     - jq --version
-    - git config user.name "kamran.aliyev"
-    - git config user.email "kamran.aliyev@ady.az"
-    - git remote set-url origin "https://oauth2:${Kamran_Access_Token}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
+    - git config --global user.name "kamran.aliyev"
+    - git config --global user.email "kamran.aliyev@ady.az"
+    - git config --global url."https://oauth2:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git".insteadOf "https://${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
     - git checkout "$CI_COMMIT_BRANCH"
     - git pull origin "$CI_COMMIT_BRANCH"
   script:
@@ -39,19 +40,14 @@
       esac
       
       echo "Using manifest file: $VERSION_MANIFEST"
-
-      # <<< MODIFICATION START: Create manifest if it doesn't exist >>>
+      
       if [ ! -f "$VERSION_MANIFEST" ]; then
         echo "Warning: Manifest file '$VERSION_MANIFEST' not found. Creating a new one."
-        # Create a default manifest file.
         printf '{\n  "version": "1.0.0",\n  "auto-increment": true,\n  "increment-type": "patch"\n}\n' > "$VERSION_MANIFEST"
-        # Stage the new file so it gets committed later.
         git add "$VERSION_MANIFEST"
         echo "Created and staged '$VERSION_MANIFEST'."
       fi
-      # <<< MODIFICATION END >>>
 
-      # Now, read the values from the (now guaranteed to exist) manifest file.
       MANIFEST_VERSION=$(jq -r '.version // "1.0.0"' "$VERSION_MANIFEST")
       AUTO_INCREMENT=$(jq -r '.["auto-increment"]' "$VERSION_MANIFEST")
       if [ "$AUTO_INCREMENT" != "false" ]; then
@@ -65,7 +61,6 @@
       LAST_TAG=$(git tag --list "v*[0-9]*${BRANCH_SUFFIX}" | sort -V | tail -n 1)
 
       if [ -z "$LAST_TAG" ]; then
-        # Use a base tag that ensures the grep below fails, forcing use of MANIFEST_VERSION
         LAST_TAG="v0.0.0${BRANCH_SUFFIX}"
         echo "No previous tag found for this branch suffix. Will start from version in manifest."
       fi
@@ -73,7 +68,6 @@
       echo "Last tag for $CI_COMMIT_BRANCH: $LAST_TAG"
 
       if [ "$AUTO_INCREMENT" = "true" ]; then
-        # Check if the last tag is a valid semver tag
         if echo "$LAST_TAG" | grep -q '^v[0-9]\+\.[0-9]\+\.[0-9]\+'; then
           MAJOR=$(echo "$LAST_TAG" | sed 's/^v\([0-9]\+\)\..*/\1/')
           MINOR=$(echo "$LAST_TAG" | sed 's/^v[0-9]\+\.\([0-9]\+\)\..*/\1/')
@@ -84,7 +78,6 @@
             "patch"|*) NEW_TAG="v${MAJOR}.${MINOR}.$((PATCH + 1))${BRANCH_SUFFIX}";;
           esac
         else
-          # Fallback if no valid last tag was found (e.g., initial run)
           NEW_TAG="v${MANIFEST_VERSION}${BRANCH_SUFFIX}"
         fi
       else
@@ -110,6 +103,8 @@
       )
       CHANGES=$(git log ${LAST_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges 2>/dev/null || echo "- Initial release")
       CHANGELOG_CONTENT="${CHANGELOG_CONTENT}${CHANGES}"
+
+      echo "$CHANGELOG_CONTENT" > CHANGELOG
 
       
       if [ "$AUTO_INCREMENT" = "true" ]; then
@@ -150,6 +145,7 @@
       - .version-manifest.dev.json
       - .version-manifest.pre.json
       - .version-manifest.prod.json
+      - CHANGELOG
     expire_in: 1 week
 
 # Pre-defined release jobs for common branches
